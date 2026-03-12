@@ -5,28 +5,24 @@ from typing import Callable, List, Dict, Tuple
 import time
 
 
-# --- Функция Розенброка и её градиент ---
+# Функция Розенброка
 def rosenbrock(x: np.ndarray) -> float:
-    """Вычисляет значение функции Розенброка."""
     x1, x2 = x
     return 100 * (x2 - x1 ** 2) ** 2 + (1 - x1) ** 2
 
-
+# Градиент функции Розенброка
 def rosenbrock_gradient(x: np.ndarray) -> np.ndarray:
-    """Вычисляет градиент функции Розенброка."""
     x1, x2 = x
     df_dx1 = -400 * x1 * (x2 - x1 ** 2) - 2 * (1 - x1)
     df_dx2 = 200 * (x2 - x1 ** 2)
     return np.array([df_dx1, df_dx2])
 
 
-# --- Линейный поиск (золотое сечение) ---
+# Линейный поиск (золотое сечение)
 def line_search_golden(f: Callable, x: np.ndarray, d: np.ndarray,
                        f_count: List[int], alpha_max: float = 5.0) -> float:
-    """
-    Линейный поиск методом золотого сечения для нахождения оптимального шага.
-    """
-    phi = (1 + np.sqrt(5)) / 2  # золотое сечение
+
+    phi = (1 + np.sqrt(5)) / 2
 
     a, b = 0.0, alpha_max
     eps = 1e-6
@@ -57,7 +53,7 @@ def line_search_golden(f: Callable, x: np.ndarray, d: np.ndarray,
     return (a + b) / 2
 
 
-# --- Модифицированный Партан-метод (PARTAN) ---
+# Модифицированный Партан-метод
 def partan_optimize(f: Callable, grad: Callable, x0: np.ndarray,
                     max_iter: int = 1000, tol: float = 1e-6) -> Dict:
     """
@@ -103,25 +99,25 @@ def partan_optimize(f: Callable, grad: Callable, x0: np.ndarray,
             'function_values': function_values
         }
 
-    # --- Шаг 1: первый шаг наискорейшего спуска (X₀ → X₁) ---
+    # Шаг 1 первый шаг наискорейшего спуска (х0 - х1)
     d1 = -g  # антиградиент
     alpha1 = line_search_golden(f, x, d1, f_count)
     x1 = x + alpha1 * d1
     history.append(x1.copy())
 
-    # Вычисляем градиент в X₁
+    # Вычисляем градиент в х1
     g1 = grad(x1)
     g_count[0] += 1
     function_values.append(f(x1))
     f_count[0] += 1
 
-    # --- Шаг 2: второй шаг наискорейшего спуска (X₁ → X₂) ---
+    # Шаг 2 второй шаг наискорейшего спуска х1 - х2
     d2 = -g1
     alpha2 = line_search_golden(f, x1, d2, f_count)
     x2 = x1 + alpha2 * d2
     history.append(x2.copy())
 
-    # Вычисляем градиент в X₂
+    # Вычисляем градиент в х2
     g2 = grad(x2)
     g_count[0] += 1
     function_values.append(f(x2))
@@ -138,10 +134,10 @@ def partan_optimize(f: Callable, grad: Callable, x0: np.ndarray,
             break
 
         # Запоминаем точки для ускоряющего шага
-        x_prev = x_current.copy()  # это X₂ или X₄
-        x_start = history[-3].copy() if len(history) >= 3 else x0.copy()  # это X₀ или X₃
+        x_prev = x_current.copy()
+        x_start = history[-3].copy() if len(history) >= 3 else x0.copy()
 
-        # --- Ускоряющий шаг: одномерная оптимизация вдоль (x_prev - x_start) ---
+        # Ускоряющий шаг одномерная оптимизация вдоль (x_prev - x_start)
         d_accel = x_prev - x_start
         if np.linalg.norm(d_accel) > 1e-12:
             alpha_accel = line_search_golden(f, x_start, d_accel, f_count)
@@ -150,7 +146,7 @@ def partan_optimize(f: Callable, grad: Callable, x0: np.ndarray,
             function_values.append(f(x_accel))
             f_count[0] += 1
 
-            # Вычисляем градиент в ускоренной точке (X₃ или X₅)
+            # Вычисляем градиент в ускоренной точке
             g_accel = grad(x_accel)
             g_count[0] += 1
             x_current = x_accel.copy()
@@ -159,7 +155,7 @@ def partan_optimize(f: Callable, grad: Callable, x0: np.ndarray,
             x_accel = x_prev
             history.append(x_accel.copy())
 
-        # --- Шаг наискорейшего спуска из ускоренной точки ---
+        # Шаг наискорейшего спуска из ускоренной точки
         d_sd = -g_current
         alpha_sd = line_search_golden(f, x_current, d_sd, f_count)
         x_sd = x_current + alpha_sd * d_sd
@@ -199,11 +195,8 @@ def partan_optimize(f: Callable, grad: Callable, x0: np.ndarray,
     }
 
 
-# --- Функция для построения графика с траекториями Партан-метода ---
+# Построение графика
 def plot_partan_trajectory(results: List[Dict], test_points: List[np.ndarray]):
-    """
-    Строит контурный график функции Розенброка с траекториями Партан-метода.
-    """
     # Сетка
     x1 = np.linspace(-3, 7, 300)
     x2 = np.linspace(-4, 6, 300)
@@ -256,10 +249,7 @@ def plot_partan_trajectory(results: List[Dict], test_points: List[np.ndarray]):
     plt.tight_layout()
     plt.show()
 
-
-# --- Основная функция ---
 def main():
-    """Тестирование модифицированного Партан-метода."""
 
     # Начальные точки
     test_points = [
@@ -268,12 +258,6 @@ def main():
         np.array([5.621, -3.635]),
         np.array([-0.221, 0.639])
     ]
-
-    print("=" * 90)
-    print("МОДИФИЦИРОВАННЫЙ ПАРТАН-МЕТОД (PARTAN) НА ФУНКЦИИ РОЗЕНБРОКА")
-    print("=" * 90)
-    print("\nАлгоритм: два шага наискорейшего спуска + ускоряющий шаг вдоль X₂ - X₀")
-    print("=" * 90)
 
     results = []
 
@@ -320,11 +304,6 @@ def main():
     df = pd.DataFrame(table_data)
     print(df.to_string(index=False))
 
-    # Строим график с траекториями
-    print("\n" + "=" * 90)
-    print("ПОСТРОЕНИЕ ГРАФИКА С ТРАЕКТОРИЯМИ...")
-    print("=" * 90)
-
     plot_partan_trajectory(results, test_points)
 
     # Анализ результатов
@@ -337,14 +316,6 @@ def main():
         dest = "глобальный минимум (1,1)" if np.allclose(stats['x_opt'], [1, 1],
                                                          atol=1e-4) else f"локальный минимум ({stats['x_opt'][0]:.3f}, {stats['x_opt'][1]:.3f})"
         print(f"{status} Точка {i + 1} ({point[0]:.3f}, {point[1]:.3f}) -> {dest}")
-
-    print("\n" + "=" * 90)
-    print("ВЫВОДЫ")
-    print("=" * 90)
-    print("Модифицированный Партан-метод за счет ускоряющих шагов")
-    print("вдоль направлений X₂ - X₀ эффективно спрямляет траекторию")
-    print("и избегает зигзагообразного движения в овражных функциях.")
-
 
 if __name__ == "__main__":
     # Для воспроизводимости результатов

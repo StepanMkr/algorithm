@@ -5,25 +5,23 @@ from typing import Callable, List, Dict
 import time
 
 
-# --- Функция Розенброка и её градиент ---
+# Функция Розенброка
 def rosenbrock(x: np.ndarray) -> float:
-    """Вычисляет значение функции Розенброка."""
     x1, x2 = x
     return 100 * (x2 - x1 ** 2) ** 2 + (1 - x1) ** 2
 
-
+# Градиент функции Розенброка
 def rosenbrock_gradient(x: np.ndarray) -> np.ndarray:
-    """Вычисляет градиент функции Розенброка."""
     x1, x2 = x
     df_dx1 = -400 * x1 * (x2 - x1 ** 2) - 2 * (1 - x1)
     df_dx2 = 200 * (x2 - x1 ** 2)
     return np.array([df_dx1, df_dx2])
 
 
-# --- Линейный поиск ---
+# Линейный поиск с дроблением шага
 def line_search(f: Callable, x: np.ndarray, d: np.ndarray,
                 grad: np.ndarray, f_count: List[int]) -> float:
-    """Простой линейный поиск с дроблением шага."""
+
     alpha = 1.0
     rho = 0.5
     c = 1e-4
@@ -47,7 +45,7 @@ def line_search(f: Callable, x: np.ndarray, d: np.ndarray,
     return 1e-8
 
 
-# --- Метод DFP ---
+# Метод DFP
 def dfp_optimize(f: Callable, grad: Callable, x0: np.ndarray,
                  max_iter: int = 1000, tol: float = 1e-6) -> Dict:
     """
@@ -139,12 +137,8 @@ def dfp_optimize(f: Callable, grad: Callable, x0: np.ndarray,
     }
 
 
-# --- Функция для построения контурного графика с траекториями ---
-# --- Функция для построения контурного графика с траекторией только сошедшейся точки ---
+# Функция для построения графика с траекториями
 def plot_rosenbrock_with_trajectory(results: List[Dict], test_points: List[np.ndarray]):
-    """
-    Строит контурный график функции Розенброка с траекторией только для сошедшейся точки.
-    """
     # Создаем сетку для контурного графика
     x1 = np.linspace(-2.5, 6.5, 200)
     x2 = np.linspace(-4, 5, 200)
@@ -163,8 +157,8 @@ def plot_rosenbrock_with_trajectory(results: List[Dict], test_points: List[np.nd
     contour = plt.contour(X1, X2, Z, levels=levels, cmap='viridis', alpha=0.7)
     plt.colorbar(contour, label='f(x) - лог. шкала')
 
-    # Находим индекс сошедшейся точки (первая точка в нашем случае)
-    converged_index = 0  # точка (1.200, 1.000)
+    # Находим индекс сошедшейся точки
+    converged_index = 0
 
     # Рисуем траекторию только для сошедшейся точки
     result = results[converged_index]
@@ -201,9 +195,7 @@ def plot_rosenbrock_with_trajectory(results: List[Dict], test_points: List[np.nd
     plt.show()
 
 
-# --- Основная функция ---
 def main():
-    """Основная функция для запуска тестирования."""
 
     # Начальные вектора в формате (x1, x2)
     test_points = [
@@ -213,30 +205,14 @@ def main():
         np.array([-0.221, 0.639])
     ]
 
-    print("=" * 90)
-    print("МИНИМИЗАЦИЯ ФУНКЦИИ РОЗЕНБРОКА МЕТОДОМ ДЭВИДОНА-ФЛЕТЧЕРА-ПАУЭЛЛА (DFP)")
-    print("=" * 90)
-
     results = []
 
     # Запускаем оптимизацию для каждой начальной точки
     for i, x0 in enumerate(test_points):
-        print(f"\n--- Тест {i + 1}: Начальная точка ({x0[0]:.3f}, {x0[1]:.3f}) ---")
-
         stats = dfp_optimize(rosenbrock, rosenbrock_gradient, x0,
                              max_iter=1000, tol=1e-6)
 
         results.append(stats)
-
-        # Выводим результаты
-        print(f"  Найденный минимум: ({stats['x_opt'][0]:.6f}, {stats['x_opt'][1]:.6f})")
-        print(f"  Значение функции: {stats['f_opt']:.2e}")
-        print(f"  Итераций: {stats['iterations']}")
-        print(f"  Вычислений функции: {stats['f_count']}")
-        print(f"  Вычислений градиента: {stats['g_count']}")
-        print(f"  Время выполнения: {stats['time']:.4f} с")
-        print(f"  Норма градиента: {stats['final_gradient_norm']:.2e}")
-        print(f"  Статус: {'СОШЁЛСЯ' if stats['converged'] else 'НЕ СОШЁЛСЯ'}")
 
     # Создаем сводную таблицу
     print("\n" + "=" * 90)
@@ -261,33 +237,7 @@ def main():
     df = pd.DataFrame(table_data)
     print(df.to_string(index=False))
 
-    # Строим контурный график с траекториями
-    print("\n" + "=" * 90)
-    print("ПОСТРОЕНИЕ ГРАФИКА ФУНКЦИИ С ТРАЕКТОРИЯМИ...")
-    print("=" * 90)
-
     plot_rosenbrock_with_trajectory(results, test_points)
-
-    # Анализ результатов
-    print("\n" + "=" * 90)
-    print("АНАЛИЗ РЕЗУЛЬТАТОВ")
-    print("=" * 90)
-
-    for i, (point, stats) in enumerate(zip(test_points, results)):
-        if stats['converged']:
-            if np.allclose(stats['x_opt'], [1, 1], rtol=1e-3):
-                print(f"✓ Точка {i + 1} ({point[0]:.3f}, {point[1]:.3f}) успешно сошлась к глобальному минимуму (1, 1)")
-            else:
-                print(
-                    f"⚠ Точка {i + 1} ({point[0]:.3f}, {point[1]:.3f}) сошлась к локальному минимуму ({stats['x_opt'][0]:.3f}, {stats['x_opt'][1]:.3f})")
-        else:
-            print(f"✗ Точка {i + 1} ({point[0]:.3f}, {point[1]:.3f}) НЕ сошлась за {stats['iterations']} итераций")
-
-    print("\nВыводы:")
-    print("1. Метод DFP чувствителен к выбору начального приближения")
-    print("2. Из некоторых точек метод может сходиться к локальным минимумам")
-    print("3. Для улучшения сходимости можно модифицировать линейный поиск")
-    print("4. Функция Розенброка имеет сложный овражный характер, что затрудняет оптимизацию")
 
 
 if __name__ == "__main__":

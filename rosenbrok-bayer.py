@@ -1,250 +1,396 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-from typing import Callable, List, Dict, Tuple
+from typing import Callable, List, Dict, Tuple, Optional
 import time
 from scipy.optimize import minimize
+from scipy.spatial.distance import cdist
 
 
-# --- Функция Розенброка и её градиент ---
+# Функция Розенброка
 def rosenbrock(x: np.ndarray) -> float:
-    """Вычисляет значение функции Розенброка."""
     x1, x2 = x
     return 100 * (x2 - x1 ** 2) ** 2 + (1 - x1) ** 2
 
-
+# Градиент функции Розенброка
 def rosenbrock_gradient(x: np.ndarray) -> np.ndarray:
-    """Вычисляет градиент функции Розенброка."""
     x1, x2 = x
     df_dx1 = -400 * x1 * (x2 - x1 ** 2) - 2 * (1 - x1)
     df_dx2 = 200 * (x2 - x1 ** 2)
     return np.array([df_dx1, df_dx2])
 
 
-# --- Улучшенный метод Баера (программа 191) ---
-def bauer_optimize_improved(f: Callable, x0: np.ndarray, bounds: List[Tuple[float, float]],
-                            max_iter: int = 200, tol: float = 1e-4) -> Dict:
+# Локальная оптимизация
+def local_optimization(f: Callable, x0: np.ndarray, bounds: List[Tuple[float, float]],
+                       grad: Optional[Callable] = None) -> Tuple[np.ndarray, float, Dict]:
     """
-    Улучшенный метод Баера с более агрессивным поиском.
+    Локальная оптимизация с использованием.
+    Возвращает точку минимума, значение функции и статистику.
     """
-    x = x0.copy().astype(float)
-    n = len(x0)
-
-    # Счетчики
-    f_count = [0]
     start_time = time.time()
 
-    # История
-    history = [x.copy()]
-    function_values = [f(x)]
-    f_count[0] += 1
+    result = minimize(
+        f, x0,
+        method='L-BFGS-B',
+        bounds=bounds,
+        jac=grad,
+        options={'maxiter': 200, 'ftol': 1e-8, 'gtol': 1e-8}
+    )
 
-    # Параметры
-    alpha = 2.0  # начальный шаг (увеличен)
-    min_alpha = 1e-4
-    reduction = 0.7
-    expansion = 1.3
+    stats = {
+        'f_count': result.nfev,
+        'g_count': result.njev if hasattr(result, 'njev') else 0,
+        'iterations': result.nit,
+        'success': result.success,
+        'time': time.time() - start_time
+    }
 
-    # Поиск по сетке
-    grid_sizes = [2.0, 1.0, 0.5, 0.25, 0.1]
+    return result.x, result.fun, stats
 
-    for iteration in range(max_iter):
-        x_old = x.copy()
-        f_old = function_values[-1]
-        improved = False
 
-        # --- Многоуровневый поиск по сетке ---
-        for grid_size in grid_sizes:
-            if improved:
-                break
+# Квадратичная интерполяционная модель
+class QuadraticInterpolationModel:
+    """
+    Квадратичная интерполяционная модель для метода Байера.
+    f(x) ≈ c + g^T x + 0.5 * x^T H x
+    """
 
-            # Исследуем точки по осям с разными шагами
-            for i in range(n):
-                for direction in [-1, 1]:
-                    delta = np.zeros(n)
-                    delta[i] = direction * grid_size * alpha
-                    x_candidate = x + delta
+    def __init__(self, dim: int):
+        self.dim = dim
+        self.n_coeffs = (dim + 1) * (dim + 2) // 2  # число коэффициентов
+        self.coeffs = None
+        self.H = None  # матрица Гессе
+        self.g = None  # градиент
+        self.c = None  # константа
 
-                    # Проверка границ
-                    in_bounds = True
-                    for j in range(n):
-                        if x_candidate[j] < bounds[j][0] or x_candidate[j] > bounds[j][1]:
-                            in_bounds = False
-                            break
+    def fit(self, points: np.ndarray, values: np.ndarray) -> bool:
+        """
+        Строит интерполяционную модель по точкам.
+        points: массив точек (n_points x dim)
+        values: значения функции в точках (n_points)
+        """
+        n_points = len(points)
 
-                    if in_bounds:
-                        f_candidate = f(x_candidate)
-                        f_count[0] += 1
+        if n_points < self.n_coeffs:
+            return False
 
-                        if f_candidate < f_old:
-                            x = x_candidate
-                            function_values.append(f_candidate)
-                            history.append(x.copy())
-                            f_old = f_candidate
-                            improved = True
-                            alpha *= expansion
-                            break
+        # Строим матрицу для МНК
+        A = np.zeros((n_points, self.n_coeffs))
 
-                if improved:
-                    break
+        for i in range(n_points):
+            x = points[i]
+            col = 0
 
-        # --- Если улучшения нет, пробуем случайные направления ---
-        if not improved:
-            for _ in range(10):
-                random_dir = np.random.randn(n)
-                random_dir = random_dir / np.linalg.norm(random_dir)
-                x_candidate = x + alpha * random_dir
+            # Линейные члены
+            for j in range(self.dim):
+                A[i, col] = x[j]
+                col += 1
 
-                # Проверка границ
-                in_bounds = True
-                for j in range(n):
-                    if x_candidate[j] < bounds[j][0] or x_candidate[j] > bounds[j][1]:
-                        in_bounds = False
-                        break
+            # Квадратичные члены (x_j * x_k для j <= k)
+            for j in range(self.dim):
+                for k in range(j, self.dim):
+                    A[i, col] = x[j] * x[k]
+                    col += 1
 
-                if in_bounds:
-                    f_candidate = f(x_candidate)
-                    f_count[0] += 1
+            # Свободный член
+            A[i, -1] = 1.0
 
-                    if f_candidate < f_old:
-                        x = x_candidate
-                        function_values.append(f_candidate)
-                        history.append(x.copy())
-                        improved = True
-                        alpha *= expansion
-                        break
+        # Решаем МНК
+        try:
+            self.coeffs, _, _, _ = np.linalg.lstsq(A, values, rcond=None)
 
-            if not improved:
-                alpha *= reduction
+            # Восстанавливаем матрицу Гессе и градиент
+            self._extract_hessian_gradient()
+            return True
+        except:
+            return False
 
-        # Ограничиваем шаг
-        alpha = max(alpha, min_alpha)
-        alpha = min(alpha, 5.0)
+    # Извлекаем матрицу Гессе и градиент из функции
+    def _extract_hessian_gradient(self):
+        self.H = np.zeros((self.dim, self.dim))
+        self.g = np.zeros(self.dim)
+
+        col = 0
+
+        # Линейные члены
+        for j in range(self.dim):
+            self.g[j] = self.coeffs[col]
+            col += 1
+
+        # Квадратичные члены
+        for j in range(self.dim):
+            for k in range(j, self.dim):
+                self.H[j, k] = self.coeffs[col]
+                self.H[k, j] = self.coeffs[col]
+                col += 1
+
+        # Свободный член
+        self.c = self.coeffs[-1]
+
+    # Предсказываем значение в точке х
+    def predict(self, x: np.ndarray) -> float:
+        if self.coeffs is None:
+            return np.inf
+
+        return self.c + self.g @ x + 0.5 * x @ self.H @ x
+
+    # Находим минимум квадратичной модели в заданных границах
+    def get_minimum(self, bounds: List[Tuple[float, float]]) -> np.ndarray:
+        if self.coeffs is None:
+            # Если модели нет, возвращаем случайную точку
+            return np.random.uniform(
+                [b[0] for b in bounds],
+                [b[1] for b in bounds]
+            )
+
+        # Проверяем на выпуклость
+        eigenvalues = np.linalg.eigvals(self.H)
+
+        if np.min(eigenvalues) > 1e-10:
+            # Модель выпукла - есть аналитическое решение
+            try:
+                x_min = -np.linalg.solve(self.H, self.g)
+                # Ограничиваем границами
+                x_min = np.clip(x_min, [b[0] for b in bounds], [b[1] for b in bounds])
+                return x_min
+            except:
+                pass
+
+        # Модель не выпукла или сингулярна - используем несколько случайных попыток
+        best_x = None
+        best_f = np.inf
+
+        for _ in range(20):
+            x_candidate = np.random.uniform(
+                [b[0] for b in bounds],
+                [b[1] for b in bounds]
+            )
+            f_candidate = self.predict(x_candidate)
+
+            if f_candidate < best_f:
+                best_f = f_candidate
+                best_x = x_candidate
+
+        return best_x if best_x is not None else np.array([(b[0] + b[1]) / 2 for b in bounds])
+
+
+# Функции для работы с множеством локальных минимумов
+def cluster_minima(minima: List[Tuple[np.ndarray, float]], tol: float = 1e-2) -> List[Tuple[np.ndarray, float]]:
+    if len(minima) <= 1:
+        return minima
+
+    points = np.array([p for p, _ in minima])
+    values = np.array([v for _, v in minima])
+
+    # Вычисляем попарные расстояния
+    distances = cdist(points, points)
+
+    # Кластеризация
+    used = np.zeros(len(points), dtype=bool)
+    unique_minima = []
+
+    for i in range(len(points)):
+        if used[i]:
+            continue
+
+        # Находим все точки в кластере
+        cluster_indices = np.where(distances[i] < tol)[0]
+        cluster_indices = [idx for idx in cluster_indices if not used[idx]]
+
+        if not cluster_indices:
+            continue
+
+        # Выбираем точку с минимальным значением функции
+        best_in_cluster = min(cluster_indices, key=lambda idx: values[idx])
+        unique_minima.append((points[best_in_cluster], values[best_in_cluster]))
+
+        # Помечаем все точки кластера как использованные
+        for idx in cluster_indices:
+            used[idx] = True
+
+    return unique_minima
+
+
+def add_minimum(minima: List[Tuple[np.ndarray, float]],
+                new_point: np.ndarray,
+                new_value: float,
+                max_size: int = 20) -> List[Tuple[np.ndarray, float]]:
+
+    # Добавляем новый минимум в список, поддерживая максимальный размер
+    minima.append((new_point.copy(), new_value))
+
+    # Кластеризуем
+    minima = cluster_minima(minima)
+
+    # Сортируем по значению функции
+    minima.sort(key=lambda x: x[1])
+
+    # Ограничиваем размер
+    if len(minima) > max_size:
+        minima = minima[:max_size]
+
+    return minima
+
+
+# Основная реализация метода Байера
+def bauer_global_optimization(f: Callable,
+                              bounds: List[Tuple[float, float]],
+                              grad: Optional[Callable] = None,
+                              n_initial_points: int = 20,
+                              n_interpolation_points: int = 8,
+                              max_iterations: int = 30,
+                              local_opt_tol: float = 1e-6) -> Dict:
+    """
+    Полная реализация метода Байера для глобальной оптимизации.
+
+    Алгоритм:
+    1. Генерирует начальные точки и находит локальные минимумы
+    2. Строит квадратичную интерполяцию между лучшими минимумами
+    3. Использует интерполяцию для предсказания новых перспективных областей
+    4. Повторяет, уточняя область поиска
+    """
+    start_time = time.time()
+    dim = len(bounds)
+
+    # Статистика
+    f_count = 0
+    g_count = 0
+    history = []  # история всех исследованных точек
+    local_minima = []  # найденные локальные минимумы
+
+    # Этап 1 Начальное исследование
+    initial_points = np.random.uniform(
+        [b[0] for b in bounds],
+        [b[1] for b in bounds],
+        size=(n_initial_points, dim)
+    )
+
+    # Добавляем угловые точки для лучшего покрытия
+    corners = []
+    for i in range(2 ** dim):
+        corner = []
+        for j in range(dim):
+            corner.append(bounds[j][i >> j & 1])
+        corners.append(np.array(corner))
+
+    initial_points = np.vstack([initial_points] + corners)
+
+    # Находим локальные минимумы из каждой начальной точки
+    for i, x0 in enumerate(initial_points):
+        x_min, f_min, stats = local_optimization(f, x0, bounds, grad)
+        f_count += stats['f_count']
+        g_count += stats['g_count']
+
+        history.append({
+            'type': 'local_min',
+            'start': x0.copy(),
+            'x': x_min.copy(),
+            'f': f_min,
+            'iteration': 0
+        })
+
+        local_minima = add_minimum(local_minima, x_min, f_min)
+
+    # Этап 2 Итеративное уточнение через интерполяцию
+    current_bounds = [list(b) for b in bounds]  # копируем границы
+
+    for iteration in range(max_iterations):
+        # Выбираем точки для интерполяции (лучшие + разнообразные)
+        n_interp = min(n_interpolation_points, len(local_minima))
+        best_points = [p for p, _ in local_minima[:n_interp]]
+        best_values = [v for _, v in local_minima[:n_interp]]
+
+        # Добавляем несколько случайных точек для разнообразия
+        if len(best_points) < n_interpolation_points:
+            n_random = n_interpolation_points - len(best_points)
+            random_points = np.random.uniform(
+                [b[0] for b in current_bounds],
+                [b[1] for b in current_bounds],
+                size=(n_random, dim)
+            )
+            best_points.extend(random_points)
+            for rp in random_points:
+                best_values.append(f(rp))
+                f_count += 1
+
+        # Строим интерполяционную модель
+        model = QuadraticInterpolationModel(dim)
+        if not model.fit(np.array(best_points), np.array(best_values)):
+            # Сужаем область поиска вокруг лучшей точки
+            best_point = local_minima[0][0]
+            for j in range(dim):
+                width = (current_bounds[j][1] - current_bounds[j][0]) * 0.8
+                current_bounds[j][0] = max(bounds[j][0], best_point[j] - width / 2)
+                current_bounds[j][1] = min(bounds[j][1], best_point[j] + width / 2)
+            continue
+
+        # Находим минимум модели
+        x_pred = model.get_minimum(current_bounds)
+
+        # Исследуем предсказанную точку
+        x_min, f_min, stats = local_optimization(f, x_pred, bounds, grad)
+        f_count += stats['f_count']
+        g_count += stats['g_count']
+
+        history.append({
+            'type': 'predicted',
+            'prediction': x_pred.copy(),
+            'x': x_min.copy(),
+            'f': f_min,
+            'iteration': iteration + 1
+        })
+
+        # Добавляем новый минимум
+        old_best = local_minima[0][1]
+        local_minima = add_minimum(local_minima, x_min, f_min)
+        new_best = local_minima[0][1]
+
+        if f_min < old_best - 1e-6:
+            print(f"    Улучшение! Новый лучший минимум: f={new_best:.2e}")
+
+        # Сужаем область поиска вокруг лучшей точки
+        if iteration < max_iterations - 1:
+            best_point = local_minima[0][0]
+            shrink_factor = 0.85
+
+            for j in range(dim):
+                width = (current_bounds[j][1] - current_bounds[j][0]) * shrink_factor
+                new_center = best_point[j]
+                current_bounds[j][0] = max(bounds[j][0], new_center - width / 2)
+                current_bounds[j][1] = min(bounds[j][1], new_center + width / 2)
 
         # Проверка сходимости
-        if len(function_values) > 5:
-            recent_improvement = abs(function_values[-1] - function_values[-5]) / (abs(function_values[-5]) + 1e-10)
-            if recent_improvement < tol:
+        if len(local_minima) >= 3:
+            values = [v for _, v in local_minima[:3]]
+            if max(values) - min(values) < local_opt_tol:
                 break
 
     end_time = time.time()
 
-    return {
-        'x_opt': x,
-        'f_opt': function_values[-1],
-        'iterations': iteration + 1,
-        'f_count': f_count[0],
-        'time': end_time - start_time,
-        'converged': True,
-        'history': np.array(history),
-        'function_values': function_values
-    }
+    # Финальный результат
+    x_opt, f_opt = local_minima[0]
 
-
-# --- Гибридный метод: Баер + DFP ---
-def bauer_dfp_hybrid(f: Callable, grad: Callable, x0: np.ndarray,
-                     bounds: List[Tuple[float, float]]) -> Dict:
-    """
-    Гибридный метод:
-    1. Сначала Баер для глобального поиска (быстро выходит в окрестность минимума)
-    2. Затем DFP для точной локальной сходимости к (1,1)
-    """
-    start_time = time.time()
-
-    # Этап 1: Баер (грубый поиск)
-    print(f"  Этап 1: Баер - глобальный поиск...")
-    bauer_result = bauer_optimize_improved(rosenbrock, x0, bounds,
-                                           max_iter=100, tol=1e-3)
-
-    x_mid = bauer_result['x_opt']
-    f_mid = bauer_result['f_opt']
-    print(f"    Промежуточный результат: ({x_mid[0]:.6f}, {x_mid[1]:.6f}), f={f_mid:.2e}")
-
-    # Этап 2: DFP (точная локальная оптимизация)
-    print(f"  Этап 2: DFP - точная локальная оптимизация...")
-
-    # Счетчики для DFP (адаптировано из вашего кода)
-    n = len(x_mid)
-    x = x_mid.copy()
-    H = np.eye(n)
-    f_count = [bauer_result['f_count']]
-    g_count = [0]
-    history = [x.copy()]
-
-    # Вычисляем градиент в начальной точке
-    g = grad(x)
-    g_count[0] += 1
-
-    for i in range(200):  # максимум 200 итераций DFP
-        if np.linalg.norm(g) < 1e-8:
-            break
-
-        # Направление спуска
-        p = -H @ g
-
-        # Упрощенный линейный поиск
-        alpha = 1.0
-        f_current = rosenbrock(x)
-        for _ in range(20):
-            x_new = x + alpha * p
-            f_new = rosenbrock(x_new)
-            f_count[0] += 1
-            if f_new < f_current + 1e-4 * alpha * (g @ p):
-                break
-            alpha *= 0.5
-
-        # Шаг
-        s = alpha * p
-        x_new = x + s
-
-        # Новый градиент
-        g_new = grad(x_new)
-        g_count[0] += 1
-        y = g_new - g
-
-        # Обновление H
-        sy = s @ y
-        if abs(sy) > 1e-16:
-            term1 = np.outer(s, s) / sy
-            Hy = H @ y
-            yHy = y @ Hy
-            if abs(yHy) > 1e-16:
-                term2 = np.outer(Hy, Hy) / yHy
-                H = H + term1 - term2
-
-        x = x_new
-        g = g_new
-        history.append(x.copy())
-
-        if np.linalg.norm(g) < 1e-8:
-            break
-
-    end_time = time.time()
-
-    # Финальное значение
-    f_opt = rosenbrock(x)
+    # Дополнительная локальная оптимизация для гарантии
+    x_opt, f_opt, final_stats = local_optimization(f, x_opt, bounds, grad)
+    f_count += final_stats['f_count']
+    g_count += final_stats['g_count']
 
     return {
-        'x_opt': x,
+        'x_opt': x_opt,
         'f_opt': f_opt,
-        'iterations_bauer': bauer_result['iterations'],
-        'iterations_dfp': i + 1,
-        'total_iterations': bauer_result['iterations'] + i + 1,
-        'f_count': f_count[0],
-        'g_count': g_count[0],
+        'iterations': iteration + 1,
+        'f_count': f_count,
+        'g_count': g_count,
         'time': end_time - start_time,
-        'converged': np.linalg.norm(grad(x)) < 1e-6,
-        'final_gradient_norm': np.linalg.norm(grad(x)),
-        'history': np.array(history),
-        'bauer_history': bauer_result['history']
+        'n_local_minima': len(local_minima),
+        'all_minima': [(p.copy(), v) for p, v in local_minima],
+        'history': history,
+        'converged': True
     }
 
 
-# --- Функция для построения графика ---
-def plot_hybrid_trajectory(results: List[Dict], test_points: List[np.ndarray]):
-    """
-    Строит контурный график с траекториями гибридного метода.
-    """
+# Визуализация
+def plot_bauer_trajectory(results: List[Dict], test_points: List[np.ndarray]):
     # Сетка
     x1 = np.linspace(-3, 7, 300)
     x2 = np.linspace(-4, 6, 300)
@@ -256,32 +402,43 @@ def plot_hybrid_trajectory(results: List[Dict], test_points: List[np.ndarray]):
         for j in range(X1.shape[1]):
             Z[i, j] = rosenbrock(np.array([X1[i, j], X2[i, j]]))
 
-    plt.figure(figsize=(14, 10))
+    plt.figure(figsize=(16, 12))
 
     # Контуры
     levels = np.logspace(-2, 4, 30)
-    contour = plt.contour(X1, X2, Z, levels=levels, cmap='viridis', alpha=0.7)
+    contour = plt.contour(X1, X2, Z, levels=levels, cmap='viridis', alpha=0.6)
     plt.colorbar(contour, label='f(x) - лог. шкала')
 
-    # Цвета
-    colors = ['red', 'blue', 'green', 'orange']
+    colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown']
 
-    # Рисуем траектории
     for i, (result, point, color) in enumerate(zip(results, test_points, colors)):
         history = result['history']
 
-        # Вся траектория
-        plt.plot(history[:, 0], history[:, 1], color=color, linewidth=2,
-                 marker='o', markersize=3, markevery=max(1, len(history) // 8),
-                 label=f'Точка {i + 1}: {point}')
-
         # Начальная точка
-        plt.plot(history[0, 0], history[0, 1], color=color, marker='*',
-                 markersize=20, markeredgecolor='black', markeredgewidth=1.5)
+        plt.plot(point[0], point[1], color=color, marker='*',
+                 markersize=20, markeredgecolor='black', markeredgewidth=1.5,
+                 label=f'Начальная точка {i + 1}')
 
-        # Конечная точка
-        plt.plot(history[-1, 0], history[-1, 1], color=color, marker='s',
-                 markersize=15, markeredgecolor='black', markeredgewidth=1.5)
+        # Все найденные локальные минимумы
+        minima_points = [item['x'] for item in history if item['type'] == 'local_min']
+        if minima_points:
+            minima_points = np.array(minima_points)
+            plt.scatter(minima_points[:, 0], minima_points[:, 1],
+                        c=color, s=50, alpha=0.6, marker='o',
+                        edgecolors='black', linewidths=1)
+
+        # Предсказанные точки
+        pred_points = [item['prediction'] for item in history if item['type'] == 'predicted']
+        if pred_points:
+            pred_points = np.array(pred_points)
+            plt.scatter(pred_points[:, 0], pred_points[:, 1],
+                        c=color, s=80, alpha=0.8, marker='^',
+                        edgecolors='black', linewidths=1)
+
+        # Финальный минимум для этой траектории
+        final_min = result['x_opt']
+        plt.plot(final_min[0], final_min[1], color=color, marker='s',
+                 markersize=15, markeredgecolor='black', markeredgewidth=2)
 
     # Глобальный минимум
     plt.plot(1, 1, 'y*', markersize=25, label='Глобальный минимум (1, 1)',
@@ -289,7 +446,7 @@ def plot_hybrid_trajectory(results: List[Dict], test_points: List[np.ndarray]):
 
     plt.xlabel('x1', fontsize=12)
     plt.ylabel('x2', fontsize=12)
-    plt.title('Гибридный метод: Баер (глобальный поиск) + DFP (локальная оптимизация)', fontsize=14)
+    plt.title('Метод Байера: глобальная оптимизация через интерполяцию между локальными минимумами', fontsize=14)
     plt.legend(loc='upper right', fontsize=9)
     plt.grid(True, alpha=0.3)
     plt.xlim(-3, 7)
@@ -298,9 +455,8 @@ def plot_hybrid_trajectory(results: List[Dict], test_points: List[np.ndarray]):
     plt.show()
 
 
-# --- Основная функция ---
-def main_hybrid():
-    """Тестирование гибридного метода."""
+# Основная функция тестирования
+def main_bauer():
 
     test_points = [
         np.array([1.200, 1.000]),
@@ -311,29 +467,36 @@ def main_hybrid():
 
     bounds = [(-3.0, 7.0), (-4.0, 6.0)]
 
-    print("=" * 90)
-    print("ГИБРИДНЫЙ МЕТОД: БАЕР (ГЛОБАЛЬНЫЙ ПОИСК) + DFP (ЛОКАЛЬНАЯ ОПТИМИЗАЦИЯ)")
-    print("=" * 90)
-    print("Цель: гарантированно достичь глобального минимума (1, 1)")
-    print("=" * 90)
-
     results = []
 
     for i, x0 in enumerate(test_points):
         print(f"\n--- Тест {i + 1}: Начальная точка ({x0[0]:.3f}, {x0[1]:.3f}) ---")
 
-        stats = bauer_dfp_hybrid(rosenbrock, rosenbrock_gradient, x0, bounds)
+        # Запускаем метод Байера
+        stats = bauer_global_optimization(
+            rosenbrock, bounds,
+            grad=rosenbrock_gradient,
+            n_initial_points=15,
+            n_interpolation_points=8,
+            max_iterations=15
+        )
         results.append(stats)
 
-        print(f"  РЕЗУЛЬТАТ: ({stats['x_opt'][0]:.8f}, {stats['x_opt'][1]:.8f})")
-        print(f"  f(x*) = {stats['f_opt']:.2e}")
-        print(
-            f"  Итераций: Баер {stats['iterations_bauer']} + DFP {stats['iterations_dfp']} = {stats['total_iterations']}")
-        print(f"  Вызовов f(x): {stats['f_count']}")
-        print(f"  Вызовов ∇f: {stats['g_count']}")
-        print(f"  Время: {stats['time']:.4f} с")
-        print(f"  Норма градиента: {stats['final_gradient_norm']:.2e}")
-        print(f"  Статус: {'ДОСТИГ (1,1)' if np.allclose(stats['x_opt'], [1, 1], atol=1e-4) else 'НЕ ДОСТИГ'}")
+        print(f"\n  РЕЗУЛЬТАТ:")
+        print(f"    Найденный минимум: ({stats['x_opt'][0]:.8f}, {stats['x_opt'][1]:.8f})")
+        print(f"    f(x*) = {stats['f_opt']:.2e}")
+        print(f"    Итераций (внешних): {stats['iterations']}")
+        print(f"    Вызовов f(x): {stats['f_count']}")
+        print(f"    Вызовов ∇f: {stats['g_count']}")
+        print(f"    Время: {stats['time']:.4f} с")
+        print(f"    Найдено локальных минимумов: {stats['n_local_minima']}")
+        print(f"    Статус: {'ДОСТИГ (1,1)' if np.allclose(stats['x_opt'], [1, 1], atol=1e-4) else 'НЕ ДОСТИГ'}")
+
+        # Показываем все найденные минимумы
+        if stats['n_local_minima'] > 1:
+            print(f"    Все найденные минимумы:")
+            for j, (p, v) in enumerate(stats['all_minima'][:5]):  # показываем первые 5
+                print(f"      {j + 1}: ({p[0]:.6f}, {p[1]:.6f}), f={v:.2e}")
 
     # Таблица результатов
     print("\n" + "=" * 90)
@@ -347,30 +510,17 @@ def main_hybrid():
             'Начальная точка': f"({point[0]:.3f}, {point[1]:.3f})",
             'Найденный минимум': f"({stats['x_opt'][0]:.6f}, {stats['x_opt'][1]:.6f})",
             'f(x*)': f"{stats['f_opt']:.2e}",
-            'Итерации': stats['total_iterations'],
-            'Вызовы f(x)': stats['f_count'],
+            'Итерации': stats['iterations'],
+            'Вызовы f': stats['f_count'],
+            'Лок. минимумы': stats['n_local_minima'],
             'Время (с)': f"{stats['time']:.4f}",
-            '||∇f||': f"{stats['final_gradient_norm']:.2e}",
             '(1,1)?': 'Да' if np.allclose(stats['x_opt'], [1, 1], atol=1e-4) else 'Нет'
         })
 
     df = pd.DataFrame(table_data)
     print(df.to_string(index=False))
 
-    # График
-    print("\n" + "=" * 90)
-    print("ПОСТРОЕНИЕ ГРАФИКА...")
-    print("=" * 90)
-
-    plot_hybrid_trajectory(results, test_points)
-
-    # Итог
-    print("\n" + "=" * 90)
-    print("ИТОГ")
-    print("=" * 90)
-    print("Гибридный метод (Баер + DFP) гарантированно достигает (1,1) из любых начальных точек!")
-    print("Баер отвечает за выход в окрестность минимума, DFP - за точную сходимость.")
-
+    plot_bauer_trajectory(results, test_points)
 
 if __name__ == "__main__":
-    main_hybrid()
+    main_bauer()
